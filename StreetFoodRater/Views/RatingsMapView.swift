@@ -101,11 +101,15 @@ struct RatingsMapView: View {
 
     /// Full-width header background that reaches the top; search stays in place.
     private var topHeaderArea: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 0) { // No spacing between title and search bar
+            Spacer() // This pushes everything down and centers the title
+            
             // Title above the search bar
             Text("Street Food Finder")
                 .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(Color.purple)
+                .foregroundStyle(Color.blue)
+            
+            Spacer() // This creates equal space above and below the title
 
             // Search bar
             HStack(spacing: 10) {
@@ -129,9 +133,11 @@ struct RatingsMapView: View {
                     .fill(Color.white)
                     .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 4)
             )
+            
+            Spacer() // This pushes everything up and centers the title
         }
         .frame(maxWidth: .infinity)
-    .padding(.top, -10)
+        .padding(.top, -10)
         .background(
             // Big header background that goes to the very top of the screen
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -311,4 +317,3 @@ private struct NearbyPickerSheet: View {
         }
     }
 }
-
