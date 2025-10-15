@@ -11,10 +11,10 @@
 
 import SwiftUI
 import MapKit
+import UIKit
 
 struct RatingsMapView: View {
     let model: RatingsViewModel
-
     /// Helps us decide which sheet (if any) is currently open.
     @State private var activeSheet: ActiveSheet?
     /// Remembers which popular food tag is currently highlighted.
@@ -69,49 +69,32 @@ struct RatingsMapView: View {
             }
         }
         .mapControls {
-            MapUserLocationButton()
             MapCompass()
         }
         .mapStyle(.standard(elevation: .realistic))
-        .overlay(alignment: .topTrailing) {
-            if model.ratings.isEmpty {
-                Text("No pins yet - add a rating first!")
-                    .padding(8)
-                    .background(.thinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .padding()
-            }
-        }
     }
 
     /// Combines the top header (full-width background up to top) and the bottom bar.
     private var overlayUI: some View {
-        VStack {
+        VStack(spacing: 0) {
             topHeaderArea
-            // Chips are now separate from the header so they don't look attached
             topFilterChips
                 .padding(.horizontal, 12)
-                .padding(.top, 6)
+                .padding(.top, 14)
             Spacer()
             bottomPreviewPanel
         }
         .padding(.horizontal, 0)
-        .padding(.top, 0)
+//        .padding(.top, -28)
     }
 
     /// Full-width header background that reaches the top; search stays in place.
     private var topHeaderArea: some View {
-        VStack(spacing: 0) { // No spacing between title and search bar
-            Spacer() // This pushes everything down and centers the title
-            
-            // Title above the search bar
+        VStack(spacing: 6) {
             Text("Street Food Finder")
                 .font(.system(size: 20, weight: .bold))
                 .foregroundStyle(Color.blue)
-            
-            Spacer() // This creates equal space above and below the title
 
-            // Search bar
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(Color.secondary)
@@ -127,17 +110,16 @@ struct RatingsMapView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .fill(Color.white)
                     .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 4)
             )
-            
-            Spacer() // This pushes everything up and centers the title
         }
+        .padding(.top, -48)
+        .padding(.bottom, -4)
         .frame(maxWidth: .infinity)
-        .padding(.top, -10)
         .background(
             // Big header background that goes to the very top of the screen
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -202,15 +184,16 @@ struct RatingsMapView: View {
                 .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
             }
         }
-        .padding(.horizontal, 20)
         .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
+            TopRoundedRectangle(cornerRadius: 24)
                 .fill(Color.white.opacity(0.92))
                 .shadow(color: Color.black.opacity(0.12), radius: 14, x: 0, y: 8)
+                .padding(.bottom, -48)
         )
-        .frame(maxWidth: .infinity)
         .ignoresSafeArea(edges: .bottom)
     }
 
@@ -222,6 +205,31 @@ struct RatingsMapView: View {
 
     private var popularFoodNames: [String] {
         ["Food 1", "Food 2", "Food 3", "Food 4", "Food 5", "Food 6"]
+    }
+
+    private struct TopRoundedRectangle: Shape {
+        var cornerRadius: CGFloat
+
+        func path(in rect: CGRect) -> Path {
+            let radius = min(cornerRadius, min(rect.width, rect.height) / 2)
+
+            var path = Path()
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX + radius, y: rect.minY),
+                control: CGPoint(x: rect.minX, y: rect.minY)
+            )
+            path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX, y: rect.minY + radius),
+                control: CGPoint(x: rect.maxX, y: rect.minY)
+            )
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.closeSubpath()
+
+            return path
+        }
     }
 
 
