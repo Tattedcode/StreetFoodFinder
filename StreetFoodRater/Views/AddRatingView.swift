@@ -18,10 +18,24 @@ import MapKit
 struct AddRatingView: View {
     /// We hold onto the main brain so we can add the new rating when the user taps save.
     let model: RatingsViewModel
+    /// Optional pre-filled location (when "Eaten Here?" is tapped)
+    let prefilledLocation: FoodLocation?
+    /// Optional pre-filled name (when "Eaten Here?" is tapped)
+    let prefilledName: String?
+    
     /// This environment helper lets us close the screen once we finish.
     @Environment(\.dismiss) private var dismiss
+    
+    /// Location manager to get current GPS location
+    @Environment(LocationManager.self) private var locationManager
 
     // MARK: - Form State (View Layer)
+    
+    init(model: RatingsViewModel, prefilledLocation: FoodLocation? = nil, prefilledName: String? = nil) {
+        self.model = model
+        self.prefilledLocation = prefilledLocation
+        self.prefilledName = prefilledName
+    }
 
     /// Stores the selected photo for the food as `PhotosPickerItem` until we convert it to Data.
     @State private var selectedFoodPhoto: PhotosPickerItem?
@@ -33,8 +47,8 @@ struct AddRatingView: View {
     /// Actual data for the cart photo.
     @State private var cartImageData: Data?
 
-    /// Keeps track of the rating slider value.
-    @State private var ratingValue: Double = 5
+    /// Keeps track of the star rating value (1-5).
+    @State private var ratingValue: Int = 0
 
     /// Optional text for the user to type notes.
     @State private var notes: String = ""
@@ -59,25 +73,35 @@ struct AddRatingView: View {
     var body: some View {
         NavigationStack {
             Form {
-                photoSection
+                nameSection
                 ratingSection
+                photoSection
                 notesSection
                 locationSection
             }
-            .navigationTitle("New Food Rating")
+            // Make the entire form's text purple to match home
+            .foregroundStyle(Color.purple)
+            .tint(.purple)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("New Food Rating")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(Color.purple)
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
                         debugPrint("[AddRatingView] User cancelled creating a rating.")
                         dismiss()
                     }
+                    .foregroundStyle(Color.purple)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Save") {
                         debugPrint("[AddRatingView] Save button tapped.")
                         createRating()
                     }
-                    .disabled(foodImageData == nil || selectedCoordinate == nil)
+                    .disabled(foodImageData == nil || selectedCoordinate == nil || ratingValue == 0)
+                    .foregroundStyle(Color.purple)
                 }
             }
             .alert("Hold on!", isPresented: $showValidationAlert, actions: {
@@ -85,6 +109,37 @@ struct AddRatingView: View {
             }, message: {
                 Text(validationMessage)
             })
+            .alert("Error", isPresented: Binding(
+                get: { model.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil } }
+            ), actions: {
+                Button("OK", role: .cancel) {}
+            }, message: {
+                Text(model.errorMessage ?? "Unknown error")
+            })
+            .overlay {
+                if model.isLoading {
+                    ZStack {
+                        Color.black.opacity(0.3)
+                            .ignoresSafeArea()
+                        
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .tint(.purple)
+                            Text("Uploading to cloud...")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                        }
+                        .padding(32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(Color.white.opacity(0.95))
+                        )
+                        .shadow(radius: 20)
+                    }
+                }
+            }
         }
         .onChange(of: selectedFoodPhoto) { _, newValue in
             Task {
@@ -102,6 +157,32 @@ struct AddRatingView: View {
                 }
             }
         }
+        .onAppear {
+            // Pre-fill location if provided (when "Eaten Here?" is tapped)
+            if let location = prefilledLocation {
+                selectedCoordinate = location.coordinate
+                mapRegion = MKCoordinateRegion(
+                    center: location.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                )
+                debugPrint("[AddRatingView] Pre-filled location: \(location.latitude), \(location.longitude)")
+            }
+            // Otherwise, use current GPS location automatically!
+            else if let currentLocation = locationManager.currentLocation {
+                selectedCoordinate = currentLocation
+                mapRegion = MKCoordinateRegion(
+                    center: currentLocation,
+                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+                )
+                debugPrint("[AddRatingView] ✅ Using current GPS location: \(currentLocation.latitude), \(currentLocation.longitude)")
+            }
+            
+            // Pre-fill name if provided
+            if let name = prefilledName {
+                displayName = name
+                debugPrint("[AddRatingView] Pre-filled name: \(name)")
+            }
+        }
     }
 
     // MARK: - Form Sections
@@ -112,6 +193,7 @@ struct AddRatingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Food Photo (Required)")
                     .font(.subheadline)
+                    .foregroundStyle(Color.purple)
                 PhotosPicker(selection: $selectedFoodPhoto, matching: .images) {
                     photoPreview(imageData: foodImageData, placeholderSystemName: "fork.knife")
                 }
@@ -120,6 +202,7 @@ struct AddRatingView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Cart Photo (Optional)")
                     .font(.subheadline)
+                    .foregroundStyle(Color.purple)
                 PhotosPicker(selection: $selectedCartPhoto, matching: .images) {
                     photoPreview(imageData: cartImageData, placeholderSystemName: "tram")
                 }
@@ -145,43 +228,94 @@ struct AddRatingView: View {
                         .font(.system(size: 40))
                     Text("Tap to choose photo")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(Color.purple)
                 }
             }
         }
         .frame(maxWidth: .infinity)
     }
 
-    /// Section for rating slider and name field.
+    /// Section for star rating only.
     private var ratingSection: some View {
         Section("Rating") {
-            Stepper(value: $ratingValue, in: 1...10, step: 1) {
-                Text("Score: \(Int(ratingValue))/10")
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Tap to rate")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.purple)
+                
+                HStack(spacing: 12) {
+                    ForEach(1...5, id: \.self) { index in
+                        Button {
+                            debugPrint("[AddRatingView] User tapped star \(index), current value: \(ratingValue)")
+                            // If tapping the same star, deselect it
+                            if ratingValue == index {
+                                ratingValue = 0
+                            } else {
+                                ratingValue = index
+                            }
+                        } label: {
+                            Image(systemName: index <= ratingValue ? "star.fill" : "star")
+                                .font(.system(size: 32))
+                                .foregroundStyle(Color.orange)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 8)
+                
+                if ratingValue > 0 {
+                    Text("\(ratingValue) star\(ratingValue == 1 ? "" : "s")")
+                        .font(.headline)
+                        .foregroundStyle(Color.purple)
+                }
             }
-
-            TextField("Dish or cart name (optional)", text: $displayName)
+        }
+    }
+    
+    /// Section for store or food name.
+    private var nameSection: some View {
+        Section("Name") {
+            TextField("Store or food name", text: $displayName)
+                .foregroundStyle(Color.purple)
         }
     }
 
-    /// Section for free-form notes.
+    /// Section for free-form review.
     private var notesSection: some View {
-        Section("Notes") {
-            TextEditor(text: $notes)
-                .frame(height: 120)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(.systemGray4))
-                )
+        Section("Review") {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $notes)
+                    .frame(height: 120)
+                    .foregroundColor(.purple)
+                
+                // Placeholder text when notes is empty
+                if notes.isEmpty {
+                    Text("This is optional")
+                        .foregroundColor(Color(.placeholderText))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(.systemGray4))
+            )
         }
     }
 
     /// Section that shows a mini map to pick the location.
     private var locationSection: some View {
         Section("Cart Location") {
-            Text("Drag the map and tap to set where the food cart lives.")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            if selectedCoordinate != nil {
+                Text("✅ Location set! (Tap map to change)")
+                    .font(.caption)
+                    .foregroundStyle(Color.green)
+            } else {
+                Text("📍 Using your current location (tap map to change)")
+                    .font(.caption)
+                    .foregroundStyle(Color.purple)
+            }
 
             MapReader { proxy in
                 Map(initialPosition: .region(mapRegion))
@@ -189,6 +323,7 @@ struct AddRatingView: View {
                         MapUserLocationButton()
                         MapCompass()
                     }
+                    .mapStyle(.standard(pointsOfInterest: .excludingAll))
                     /// We use a drag gesture with zero distance so we can grab the tap location (TapGesture doesn't give us a CGPoint).
                     .gesture(
                         DragGesture(minimumDistance: 0)
@@ -210,6 +345,7 @@ struct AddRatingView: View {
                                 .padding(8)
                                 .background(.thinMaterial)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .foregroundStyle(Color.purple)
                         }
                     }
             }
@@ -232,19 +368,29 @@ struct AddRatingView: View {
             showValidationAlert = true
             return
         }
+        
+        guard ratingValue > 0 else {
+            validationMessage = "Please tap the stars to give a rating."
+            showValidationAlert = true
+            return
+        }
 
         let rating = FoodRating(
             foodImageData: foodImageData,
             cartImageData: cartImageData,
-            rating: Int(ratingValue),
+            rating: ratingValue,
             notes: notes.isEmpty ? nil : notes,
             displayName: displayName.isEmpty ? nil : displayName,
             location: FoodLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         )
 
-        debugPrint("[AddRatingView] Created rating -> sending to model.")
-        model.addRating(rating)
-        dismiss()
+        debugPrint("[AddRatingView] Created rating with \(ratingValue) stars -> uploading to cloud!")
+        
+        // Upload to cloud (async operation)
+        Task {
+            await model.addRating(rating)
+            dismiss()
+        }
     }
 
     /// Loads the chosen photo into Data so we can store it.
@@ -297,4 +443,3 @@ private struct MapPinView: View {
 #Preview {
     AddRatingView(model: RatingsViewModel())
 }
-

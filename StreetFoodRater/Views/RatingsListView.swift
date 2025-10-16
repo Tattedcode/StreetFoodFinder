@@ -85,9 +85,16 @@ private struct RatingRowView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(rating.displayName ?? "Unnamed dish")
                     .font(.headline)
-                Text("Score: \(rating.rating)/10")
-                    .font(.subheadline)
-                    .foregroundColor(.orange)
+                
+                // Star rating display
+                HStack(spacing: 2) {
+                    ForEach(1...5, id: \.self) { index in
+                        Image(systemName: index <= rating.rating ? "star.fill" : "star")
+                            .font(.system(size: 14))
+                            .foregroundColor(.orange)
+                    }
+                }
+                
                 Text(DateFormatterUtility.string(from: rating.createdAt))
                     .font(.caption)
                     .foregroundColor(.secondary)

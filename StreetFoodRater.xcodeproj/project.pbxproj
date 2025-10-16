@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		000488732EA0E557001A6A02 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 000488722EA0E557001A6A02 /* Supabase */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		00231EB52E9E45AF008E1A88 /* StreetFoodRater.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StreetFoodRater.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,16 +27,25 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000488732EA0E557001A6A02 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		000488712EA0E557001A6A02 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		00231EAC2E9E45AF008E1A88 = {
 			isa = PBXGroup;
 			children = (
 				00231EB72E9E45AF008E1A88 /* StreetFoodRater */,
+				000488712EA0E557001A6A02 /* Frameworks */,
 				00231EB62E9E45AF008E1A88 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -65,6 +78,7 @@
 			);
 			name = StreetFoodRater;
 			packageProductDependencies = (
+				000488722EA0E557001A6A02 /* Supabase */,
 			);
 			productName = StreetFoodRater;
 			productReference = 00231EB52E9E45AF008E1A88 /* StreetFoodRater.app */;
@@ -94,6 +108,9 @@
 			);
 			mainGroup = 00231EAC2E9E45AF008E1A88;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				000488632EA0DBB3001A6A02 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 00231EB62E9E45AF008E1A88 /* Products */;
 			projectDirPath = "";
@@ -256,6 +273,7 @@
 				DEVELOPMENT_TEAM = 66245TXU5U;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show food carts near you and save where you found great food!";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -288,6 +306,7 @@
 				DEVELOPMENT_TEAM = 66245TXU5U;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show food carts near you and save where you found great food!";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -332,6 +351,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		000488632EA0DBB3001A6A02 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		000488722EA0E557001A6A02 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000488632EA0DBB3001A6A02 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 00231EAD2E9E45AF008E1A88 /* Project object */;
 }
