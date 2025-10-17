@@ -125,17 +125,18 @@ private struct RatingRowView: View {
     }
 }
 
-#Preview {
-    let demoRating = FoodRating(
-        foodImageData: UIImage(systemName: "takeoutbag.and.cup.and.straw")!.pngData()!,
-        cartImageData: nil,
-        rating: 8,
-        notes: "Super spicy pad thai!",
-        displayName: "Pad Thai Tuk-Tuk",
-        location: FoodLocation(latitude: 13.7563, longitude: 100.5018)
-    )
-    let viewModel = RatingsViewModel()
-    viewModel.ratings = [demoRating]
-    return RatingsListView(model: viewModel)
-}
+// #Preview {
+//     let demoRating: FoodRating = FoodRating(
+//         userId: UUID(), // Demo user ID
+//         foodImageData: UIImage(systemName: "takeoutbag.and.cup.and.straw")!.pngData()!,
+//         cartImageData: nil,
+//         rating: 8,
+//         notes: "Super spicy pad thai!",
+//         displayName: "Pad Thai Tuk-Tuk",
+//         location: FoodLocation(latitude: 13.7563, longitude: 100.5018)
+//     )
+//     let viewModel = RatingsViewModel()
+//     viewModel.ratings = [demoRating]
+//     RatingsListView(model: viewModel)
+// }
 

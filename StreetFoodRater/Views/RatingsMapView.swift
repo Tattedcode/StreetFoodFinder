@@ -26,6 +26,19 @@ struct RatingsMapView: View {
 
     /// Keeps track of the rating we tapped so we can navigate to its detail screen.
     @State private var selectedRatingID: UUID?
+    
+    /// Selected location group (for showing all ratings at a location)
+    @State private var selectedLocationGroupID: String?
+    
+    /// Filtered location groups based on search text
+    var filteredLocationGroups: [LocationGroup] {
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return model.locationGroups
+        }
+        return model.locationGroups.filter { group in
+            group.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,22 +46,22 @@ struct RatingsMapView: View {
                 mapContent
                 overlayUI
             }
+            .navigationDestination(for: UUID.self) { ratingID in
+                if let rating = model.ratings.first(where: { $0.id == ratingID }) {
+                    RatingDetailView(model: model, rating: rating)
+                }
+            }
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .addRating:
                 AddRatingView(model: model)
-            case .nearby:
-                NearbyPickerSheet(options: nearbyDemoOptions) { option in
-                    debugPrint("[RatingsMapView] User picked nearby option: \(option.name)")
-                }
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
             case .addRatingAtLocation(let location, let name):
                 AddRatingView(
                     model: model,
                     prefilledLocation: location,
-                    prefilledName: name
+                    prefilledName: name,
+                    hideMapSection: true  // Hide map when rating existing cart
                 )
             }
         }
@@ -63,12 +76,16 @@ struct RatingsMapView: View {
         Map(position: Binding(
             get: { .region(locationManager.mapRegion) },
             set: { _ in }
-        ), selection: $selectedRatingID) {
-            ForEach(model.ratings) { rating in
-                Annotation(rating.displayName ?? "Yummy Cart", coordinate: rating.location.coordinate) {
-                    FoodPinView(rating: rating, isSelected: selectedRatingID == rating.id)
+        ), selection: $selectedLocationGroupID) {
+            // Show grouped locations with average ratings (filtered by search)
+            ForEach(filteredLocationGroups) { group in
+                Annotation(group.name, coordinate: group.coordinate) {
+                    LocationGroupPinView(
+                        group: group,
+                        isSelected: selectedLocationGroupID == group.id
+                    )
                 }
-                .tag(rating.id)
+                .tag(group.id)
             }
             
             // Show user's current location as a blue dot
@@ -85,13 +102,17 @@ struct RatingsMapView: View {
                 }
             }
         }
+        .onTapGesture { location in
+            debugPrint("[RatingsMapView] 🗺️ Map tapped at screen location: \(location)")
+            handleMapTap(at: location)
+        }
         .mapControls {
             MapCompass()
         }
         .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll))
-        .onChange(of: selectedRatingID) { _, newValue in
-            if let ratingID = newValue {
-                debugPrint("[RatingsMapView] Pin selected with ID: \(ratingID)")
+        .onChange(of: selectedLocationGroupID) { _, newValue in
+            if let groupID = newValue {
+                debugPrint("[RatingsMapView] Location group selected with ID: \(groupID)")
             }
         }
     }
@@ -103,24 +124,19 @@ struct RatingsMapView: View {
             Spacer()
             
             // Photo preview when a pin is selected
-            if let selectedID = selectedRatingID,
-               let selectedRating = model.ratings.first(where: { $0.id == selectedID }) {
-                photoPreviewCard(for: selectedRating)
+            if let selectedGroupID = selectedLocationGroupID,
+               let selectedGroup = model.locationGroups.first(where: { $0.id == selectedGroupID }) {
+                locationGroupPreviewCard(for: selectedGroup)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .padding(.bottom, 8)
             }
             
             // Floating buttons at bottom
             HStack {
-                // Zoom controls on the left
-                zoomControls
-                    .padding(.leading, 16)
-                    .padding(.bottom, 16)
-                
                 Spacer()
                 
-                // Nearby button on the right
-                nearbyFloatingButton
+                // Zoom controls on the right (where nearby button used to be)
+                zoomControls
                     .padding(.trailing, 16)
                     .padding(.bottom, 16)
             }
@@ -151,22 +167,38 @@ struct RatingsMapView: View {
     /// Full-width header background that reaches the top; search stays in place.
     private var topHeaderArea: some View {
         VStack(spacing: 6) {
-            Text("Street Food Finder")
-                .font(.system(size: 20, weight: .bold))
-                .foregroundStyle(Color.purple)
+            // Title with logo
+            HStack(spacing: 8) {
+                Image("streetfoodlogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 30, height: 30)
+                
+                Text("Street Food Finder")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundStyle(Color.purple)
+            }
 
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(Color.secondary)
+                
                 TextField("Search bars, carts, dishes", text: $searchText)
                     .textInputAutocapitalization(.never)
                     .disableAutocorrection(true)
-                Button {
-                    debugPrint("[RatingsMapView] Filter button tapped with query: \(searchText)")
-                } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Color.purple)
+                
+                // Clear button when search text is present
+                if !searchText.isEmpty {
+                    Button {
+                        debugPrint("[RatingsMapView] Clear search tapped")
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Color.gray.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 16)
@@ -189,26 +221,10 @@ struct RatingsMapView: View {
         )
     }
 
-    /// Zoom controls (bottom left corner)
+    /// Zoom controls (bottom right corner) - Horizontal layout
     private var zoomControls: some View {
-        VStack(spacing: 12) {
-            // Zoom In button
-            Button {
-                debugPrint("[RatingsMapView] Zoom in button tapped")
-                zoomIn()
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 44, height: 44)
-                    .background(
-                        Circle()
-                            .fill(LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .top, endPoint: .bottom))
-                    )
-                    .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 4)
-            }
-            
-            // Zoom Out button
+        HStack(spacing: 12) {
+            // Zoom Out button (left)
             Button {
                 debugPrint("[RatingsMapView] Zoom out button tapped")
                 zoomOut()
@@ -219,33 +235,26 @@ struct RatingsMapView: View {
                     .frame(width: 44, height: 44)
                     .background(
                         Circle()
-                            .fill(LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                            .fill(LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .leading, endPoint: .trailing))
                     )
                     .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 4)
             }
-        }
-    }
-    
-    /// Floating nearby button (bottom right corner)
-    private var nearbyFloatingButton: some View {
-        Button {
-            debugPrint("[RatingsMapView] Nearby button tapped - presenting nearby picker sheet.")
-            activeSheet = .nearby
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "location.fill")
-                    .font(.system(size: 16, weight: .bold))
-                Text("Nearby")
-                    .font(.system(size: 16, weight: .semibold))
+            
+            // Zoom In button (right)
+            Button {
+                debugPrint("[RatingsMapView] Zoom in button tapped")
+                zoomIn()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        Circle()
+                            .fill(LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .leading, endPoint: .trailing))
+                    )
+                    .shadow(color: Color.black.opacity(0.25), radius: 8, x: 0, y: 4)
             }
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            .background(
-                LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .top, endPoint: .bottom)
-            )
-            .clipShape(Capsule())
-            .shadow(color: Color.black.opacity(0.25), radius: 12, x: 0, y: 6)
         }
     }
     
@@ -277,6 +286,100 @@ struct RatingsMapView: View {
         )
         
         debugPrint("[RatingsMapView] Zoomed out to delta: \(newLatitudeDelta)")
+    }
+    
+    /// Location group preview card showing average rating
+    private func locationGroupPreviewCard(for group: LocationGroup) -> some View {
+        VStack(spacing: 12) {
+            // Main info card (tappable to view first rating's details)
+            if let firstRating = group.latestRating {
+                NavigationLink(value: firstRating.id) {
+                    HStack(spacing: 12) {
+                        // Food photo
+                        if let image = ImageConverter.makeImage(from: firstRating.foodImageData) {
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 80, height: 80)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        
+                        // Info section
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(group.name)
+                                .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(Color.primary)
+                                .lineLimit(1)
+                            
+                            // Average rating
+                            HStack(spacing: 6) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(Color.orange)
+                                Text(String(format: "%.1f", group.averageRating))
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(Color.primary)
+                                Text("(\(group.reviewCount) \(group.reviewCount == 1 ? "review" : "reviews"))")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Color.secondary)
+                            }
+                            
+                            Text("Tap to view all reviews")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        // Chevron
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.purple)
+                        
+                        // Close button
+                        Button {
+                            debugPrint("[RatingsMapView] Close preview tapped")
+                            selectedLocationGroupID = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 22))
+                                .foregroundStyle(Color.gray.opacity(0.5))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.white)
+                            .shadow(color: Color.black.opacity(0.15), radius: 12, x: 0, y: 6)
+                    )
+                }
+                
+                // "Eaten Here Before?" button
+                Button {
+                    debugPrint("[RatingsMapView] Eaten Here Before button tapped for: \(group.name)")
+                    activeSheet = .addRatingAtLocation(firstRating.location, name: group.name)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "fork.knife.circle.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                        Text("Eaten Here Before?")
+                            .font(.system(size: 16, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(
+                        LinearGradient(colors: [Color.orange, Color.orange.opacity(0.8)], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .shadow(color: Color.orange.opacity(0.3), radius: 8, x: 0, y: 4)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: selectedLocationGroupID)
     }
     
     /// Photo preview card that appears when a pin is tapped
@@ -374,14 +477,81 @@ struct RatingsMapView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
-        .navigationDestination(for: UUID.self) { ratingID in
-            if let rating = model.ratings.first(where: { $0.id == ratingID }) {
-                RatingDetailView(model: model, rating: rating)
-            }
-        }
     }
 
     /// Custom pin view that displays the food photo
+    /// Pin view for location groups showing average rating
+    private struct LocationGroupPinView: View {
+        let group: LocationGroup
+        let isSelected: Bool
+        
+        var body: some View {
+            VStack(spacing: 0) {
+                // Food photo in circular frame
+                if let latestRating = group.latestRating,
+                   let image = ImageConverter.makeImage(from: latestRating.foodImageData) {
+                    ZStack(alignment: .topTrailing) {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: isSelected ? 50 : 40, height: isSelected ? 50 : 40)
+                            .clipShape(Circle())
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 3)
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.orange, lineWidth: isSelected ? 3 : 2)
+                            )
+                            .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+                        
+                        // Average rating badge
+                        if group.reviewCount > 1 {
+                            HStack(spacing: 2) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 8))
+                                Text(String(format: "%.1f", group.averageRating))
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule()
+                                    .fill(Color.orange)
+                            )
+                            .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                            .offset(x: 8, y: -8)
+                        }
+                    }
+                } else {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: isSelected ? 50 : 40, height: isSelected ? 50 : 40)
+                        .overlay(
+                            Image(systemName: "fork.knife")
+                                .foregroundStyle(Color.white)
+                                .font(.system(size: 18))
+                        )
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: 3)
+                        )
+                        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
+                }
+                
+                // Pin point
+                Triangle()
+                    .fill(isSelected ? Color.orange : Color.orange.opacity(0.9))
+                    .frame(width: 12, height: 8)
+                    .offset(y: -2)
+            }
+            .scaleEffect(isSelected ? 1.1 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isSelected)
+        }
+    }
+    
     private struct FoodPinView: View {
         let rating: FoodRating
         let isSelected: Bool
@@ -467,220 +637,77 @@ struct RatingsMapView: View {
             return path
         }
     }
-
-
-    private var nearbyDemoOptions: [NearbyFoodOption] {
-        [
-            NearbyFoodOption(
-                name: "Jack's Place",
-                distanceText: "56m",
-                rating: 4.8,
-                imageURL: URL(string: "https://images.unsplash.com/photo-1543353071-873f17a7a088?auto=format&fit=crop&w=600&q=80")!
-            ),
-            NearbyFoodOption(
-                name: "Hot & Flame",
-                distanceText: "157m",
-                rating: 4.0,
-                imageURL: URL(string: "https://images.unsplash.com/photo-1499028344343-cd173ffc68a9?auto=format&fit=crop&w=600&q=80")!
-            ),
-            NearbyFoodOption(
-                name: "Alloha",
-                distanceText: "215m",
-                rating: 4.6,
-                imageURL: URL(string: "https://images.unsplash.com/photo-1470337458703-46ad1756a187?auto=format&fit=crop&w=600&q=80")!
-            ),
-            NearbyFoodOption(
-                name: "Juniko's Bar",
-                distanceText: "367m",
-                rating: 4.7,
-                imageURL: URL(string: "https://images.unsplash.com/photo-1466978913421-dad2ebd01d17?auto=format&fit=crop&w=600&q=80")!
-            )
-        ]
+    
+    // MARK: - Map Interaction
+    
+    /// Handle when user taps on the map to create a new rating
+    private func handleMapTap(at location: CGPoint) {
+        debugPrint("[RatingsMapView] 🗺️ Handling map tap at screen location: \(location)")
+        
+        // Convert screen coordinates to map coordinates
+        // This is a simplified approach - for production, consider using MapReader
+        let mapRegion = locationManager.mapRegion
+        
+        // Calculate approximate coordinates based on tap position
+        // This is a rough estimation based on screen dimensions
+        let screenWidth: CGFloat = 400  // Approximate screen width
+        let screenHeight: CGFloat = 400 // Approximate screen height
+        
+        // Calculate the offset from center (normalized to -0.5 to 0.5)
+        let xOffset = (location.x - screenWidth / 2) / screenWidth
+        let yOffset = (location.y - screenHeight / 2) / screenHeight
+        
+        // Convert to latitude/longitude offset
+        let latOffset = yOffset * mapRegion.span.latitudeDelta
+        let lonOffset = xOffset * mapRegion.span.longitudeDelta
+        
+        // Calculate final coordinates
+        let tapLatitude = mapRegion.center.latitude - latOffset
+        let tapLongitude = mapRegion.center.longitude + lonOffset
+        
+        let tappedCoordinate = CLLocationCoordinate2D(latitude: tapLatitude, longitude: tapLongitude)
+        
+        debugPrint("[RatingsMapView] 📍 Converted to map coordinates: \(tappedCoordinate.latitude), \(tappedCoordinate.longitude)")
+        
+        // Create FoodLocation from tapped coordinates
+        let tappedLocation = FoodLocation(latitude: tappedCoordinate.latitude, longitude: tappedCoordinate.longitude)
+        
+        // Open AddRatingView with the tapped location
+        activeSheet = .addRatingAtLocation(tappedLocation, name: nil)
+        
+        debugPrint("[RatingsMapView] ✅ Opening AddRatingView for tapped location")
     }
 }
 
-#Preview {
-    let demoRating = FoodRating(
-        foodImageData: UIImage(systemName: "takeoutbag.and.cup.and.straw")!.pngData()!,
-        cartImageData: nil,
-        rating: 7,
-        notes: "Nice noodles",
-        displayName: "Noodle Cart",
-        location: FoodLocation(latitude: 13.7563, longitude: 100.5018)
-    )
-    let vm = RatingsViewModel()
-    vm.ratings = [demoRating]
-    return RatingsMapView(model: vm)
-}
+// #Preview {
+//     let demoRating: FoodRating = FoodRating(
+//         userId: UUID(), // Demo user ID
+//         foodImageData: UIImage(systemName: "takeoutbag.and.cup.and.straw")!.pngData()!,
+//         cartImageData: nil,
+//         rating: 7,
+//         notes: "Nice noodles",
+//         displayName: "Noodle Cart",
+//         location: FoodLocation(latitude: 13.7563, longitude: 100.5018)
+//     )
+//     let vm = RatingsViewModel()
+//     vm.ratings = [demoRating]
+//     RatingsMapView(model: vm)
+// }
 
 // MARK: - Helper Types
 
 /// Keeps track of which sheet the map is showing.
 private enum ActiveSheet: Identifiable {
     case addRating
-    case nearby
     case addRatingAtLocation(FoodLocation, name: String?)
 
     var id: Int {
         switch self {
         case .addRating:
             return 0
-        case .nearby:
-            return 1
         case .addRatingAtLocation:
-            return 2
+            return 1
         }
     }
 }
 
-/// Dummy row information for the nearby picker.
-private struct NearbyFoodOption: Identifiable {
-    let id = UUID()
-    let name: String
-    let distanceText: String
-    let rating: Double
-    let imageURL: URL
-}
-
-/// Sheet that shows pretend nearby food results.
-private struct NearbyPickerSheet: View {
-    /// Pretend options that the user can pick.
-    let options: [NearbyFoodOption]
-    /// Called when the kid taps one of the rows.
-    let onSelect: (NearbyFoodOption) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-
-    private let gridColumns = [
-        GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16)
-    ]
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: gridColumns, spacing: 16) {
-                    ForEach(options) { option in
-                        Button {
-                            debugPrint("[NearbyPickerSheet] User tapped \(option.name)")
-                            onSelect(option)
-                            dismiss()
-                        } label: {
-                            NearbyFoodCard(option: option)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-                .padding(.bottom, 32)
-            }
-            .background(Color(.systemGroupedBackground))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text("Nearby")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(Color.purple)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        debugPrint("[NearbyPickerSheet] Done tapped.")
-                        dismiss()
-                    }
-                    .foregroundStyle(Color.purple)
-                }
-            }
-        }
-    }
-
-    /// Single grid card for a nearby option.
-    private struct NearbyFoodCard: View {
-        let option: NearbyFoodOption
-
-        var body: some View {
-            GeometryReader { geometry in
-                VStack(alignment: .leading, spacing: 0) {
-                    // Image section - no spacing, flush to top
-                    AsyncImage(url: option.imageURL) { phase in
-                        switch phase {
-                        case .empty:
-                            ProgressView()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        case .failure:
-                            Color.gray.opacity(0.2)
-                                .overlay(
-                                    Image(systemName: "fork.knife")
-                                        .font(.system(size: 28, weight: .regular))
-                                        .foregroundStyle(Color.gray)
-                                )
-                        @unknown default:
-                            Color.gray.opacity(0.2)
-                        }
-                    }
-                    .frame(width: geometry.size.width, height: 120)
-                    .clipped()
-
-                    // Content section
-                    VStack(alignment: .leading, spacing: 6) {
-                        // Name and distance in same row
-                        HStack(alignment: .top) {
-                            Text(option.name)
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(Color.primary)
-                                .lineLimit(1)
-                            
-                            Spacer(minLength: 4)
-                            
-                            Text(option.distanceText)
-                                .font(.system(size: 14, weight: .regular))
-                                .foregroundStyle(Color.primary)
-                        }
-                        
-                        // Rating section
-                        HStack(spacing: 2) {
-                            ForEach(0..<5, id: \.self) { index in
-                                Image(systemName: starImage(for: index, rating: option.rating))
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(Color.orange)
-                            }
-                            Text(String(format: "%.1f", option.rating))
-                                .font(.system(size: 15, weight: .regular))
-                                .foregroundStyle(Color.primary)
-                                .padding(.leading, 4)
-                        }
-                        
-                        // Tags section (placeholder)
-                        Text("elegant, steak, wine, ro...")
-                            .font(.system(size: 13, weight: .regular))
-                            .foregroundStyle(Color.secondary)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            .frame(height: 220)
-            .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: Color.black.opacity(0.1), radius: 6, x: 0, y: 3)
-        }
-
-        /// Selects the SF Symbol that best represents the rating for a given star slot.
-        private func starImage(for index: Int, rating: Double) -> String {
-            let threshold = rating - Double(index)
-            if threshold >= 1 {
-                return "star.fill"
-            } else if threshold >= 0.5 {
-                return "star.leadinghalf.filled"
-            } else {
-                return "star"
-            }
-        }
-    }
-}

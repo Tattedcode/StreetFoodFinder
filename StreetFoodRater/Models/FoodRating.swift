@@ -31,6 +31,8 @@ struct FoodLocation: Codable, Equatable {
 struct FoodRating: Identifiable, Codable, Equatable {
     /// A unique ID so SwiftUI can tell each rating apart. Think of it like giving every card its own name tag.
     let id: UUID
+    /// The ID of the user who created this rating. This ensures each user only sees their own ratings!
+    let userId: UUID
     /// Binary data for the photo of the actual food. We store it as `Data` so we can save it on the device.
     let foodImageData: Data
     /// Binary data for the food cart photo. It is optional because maybe we only snapped the food.
@@ -49,6 +51,7 @@ struct FoodRating: Identifiable, Codable, Equatable {
     /// We use a custom initializer so we can print debug text whenever a rating is created.
     init(
         id: UUID = UUID(),
+        userId: UUID,
         foodImageData: Data,
         cartImageData: Data? = nil,
         rating: Int,
@@ -58,9 +61,10 @@ struct FoodRating: Identifiable, Codable, Equatable {
         createdAt: Date = Date()
     ) {
         // Debug print helps us check in the Xcode console that a rating was created successfully.
-        debugPrint("[FoodRating] Creating new rating with score \(rating) for \(displayName ?? "Unnamed dish")")
+        debugPrint("[FoodRating] Creating new rating with score \(rating) for \(displayName ?? "Unnamed dish") by user \(userId)")
 
         self.id = id
+        self.userId = userId
         self.foodImageData = foodImageData
         self.cartImageData = cartImageData
         self.rating = rating

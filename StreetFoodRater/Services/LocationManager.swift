@@ -34,7 +34,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
     /// Current map region (updates when location changes)
     var mapRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 14.5995, longitude: 120.9842), // Manila, Philippines default
-        span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005) // Even more zoomed in (street level)
     )
     
     override init() {
@@ -97,7 +97,7 @@ final class LocationManager: NSObject, CLLocationManagerDelegate {
             // Update map region to center on user's location
             mapRegion = MKCoordinateRegion(
                 center: coordinate,
-                span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005) // Street level zoom
             )
         }
     }

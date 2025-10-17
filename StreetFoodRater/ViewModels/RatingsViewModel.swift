@@ -12,6 +12,8 @@
 
 import Foundation
 import Observation
+import Supabase
+import CoreLocation
 
 @Observable
 @MainActor
@@ -30,18 +32,32 @@ final class RatingsViewModel {
     
     /// Reference to Supabase manager
     private let supabase = SupabaseManager.shared
+    
+    /// Real-time subscription channel
+    private var realtimeChannel: RealtimeChannelV2?
 
     init() {
         debugPrint("[RatingsViewModel] Initialized with cloud storage")
         // Load ratings from cloud when app starts
         Task {
             await loadFromCloud()
+            await startRealtimeUpdates()
+        }
+    }
+    
+    deinit {
+        debugPrint("[RatingsViewModel] Deinitializing - unsubscribing from real-time updates")
+        Task { @MainActor in
+            if let channel = realtimeChannel {
+                await supabase.unsubscribe(from: channel)
+            }
         }
     }
 
     /// Add a new rating to the cloud (called from AddRatingView)
     func addRating(_ rating: FoodRating) async {
         debugPrint("[RatingsViewModel] Adding rating to cloud: \(rating.id)")
+        debugPrint("  📍 SAVING coordinates: lat=\(rating.location.latitude), lon=\(rating.location.longitude)")
         isLoading = true
         errorMessage = nil
         
@@ -76,8 +92,9 @@ final class RatingsViewModel {
             
             debugPrint("[RatingsViewModel] ✅ Rating saved to cloud!")
             
-            // Step 5: Add to local array for instant display (optimistic update)
-            ratings.insert(rating, at: 0)
+            // Step 5: Don't add to local array - let real-time updates handle it
+            // This prevents duplication when real-time subscription receives the same rating
+            debugPrint("[RatingsViewModel] ⏳ Waiting for real-time update to add rating to UI...")
             
             // Step 6: Refresh from cloud to get everyone's ratings
             await loadFromCloud()
@@ -106,12 +123,27 @@ final class RatingsViewModel {
         
         isLoading = false
     }
+    
+    /// ☢️ CLEAR ALL DATA (Nuclear option for testing)
+    func clearAllData() async {
+        debugPrint("[RatingsViewModel] ☢️ CLEARING ALL LOCAL DATA")
+        await MainActor.run {
+            ratings.removeAll()
+            debugPrint("[RatingsViewModel] ✅ Local cache cleared")
+        }
+    }
 
     /// Load all ratings from the cloud (everyone's ratings!)
     func loadFromCloud() async {
         debugPrint("[RatingsViewModel] Loading ratings from cloud...")
         isLoading = true
         errorMessage = nil
+        
+        // MIGRATION: Clear existing ratings to prevent mixing old (no userId) and new (with userId) data
+        await MainActor.run {
+            ratings.removeAll()
+            debugPrint("[RatingsViewModel] 🧹 Cleared existing ratings for migration to userId-based system")
+        }
         
         do {
             // Fetch all cloud ratings
@@ -137,8 +169,12 @@ final class RatingsViewModel {
                 let cartPhotoData = await downloadPhoto(from: cloudRating.cartPhotoUrl)
                 
                 // Convert to FoodRating for display
+                debugPrint("[RatingsViewModel] 📍 Converting rating for: \(location.name ?? "Unknown")")
+                debugPrint("  Database lat: \(location.latitude), lon: \(location.longitude)")
+                
                 let foodRating = FoodRating(
                     id: cloudRating.id,
+                    userId: cloudRating.userId,
                     foodImageData: foodPhotoData,
                     cartImageData: cartPhotoData,
                     rating: cloudRating.rating,
@@ -150,6 +186,9 @@ final class RatingsViewModel {
                     ),
                     createdAt: cloudRating.createdAt
                 )
+                
+                debugPrint("  FoodLocation created: lat=\(foodRating.location.latitude), lon=\(foodRating.location.longitude)")
+                debugPrint("  CLLocationCoordinate2D: \(foodRating.location.coordinate.latitude), \(foodRating.location.coordinate.longitude)")
                 
                 convertedRatings.append(foodRating)
             }
@@ -201,6 +240,86 @@ final class RatingsViewModel {
     func removeAllRatingsForDebug() async {
         debugPrint("[RatingsViewModel] ⚠️ Clearing all local ratings (cloud data remains)")
         ratings.removeAll()
+    }
+    
+    // MARK: - Real-Time Updates
+    
+    /// Start listening for real-time updates from Supabase
+    private func startRealtimeUpdates() async {
+        debugPrint("[RatingsViewModel] 🔴 Starting real-time updates...")
+        
+        do {
+            realtimeChannel = try await supabase.subscribeToRatingsUpdates { [weak self] cloudRating, location in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    debugPrint("[RatingsViewModel] 🔴 NEW RATING RECEIVED via real-time!")
+                    await self.handleNewRating(cloudRating, location: location)
+                }
+            }
+            debugPrint("[RatingsViewModel] ✅ Real-time updates active!")
+        } catch {
+            debugPrint("[RatingsViewModel] ❌ Failed to start real-time updates: \(error)")
+        }
+    }
+    
+    /// Handle a new rating received from real-time subscription
+    private func handleNewRating(_ cloudRating: CloudRating, location: Location) async {
+        // Check if we already have this rating (avoid duplicates)
+        // Check by ID first, then by content to be extra safe
+        if ratings.contains(where: { $0.id == cloudRating.id }) {
+            debugPrint("[RatingsViewModel] 🔴 Rating already exists (by ID), skipping")
+            return
+        }
+        
+        // Additional check: same user, same location, same rating, same time (within 1 minute)
+        let duplicateByContent = ratings.contains { existingRating in
+            existingRating.userId == cloudRating.userId &&
+            abs(existingRating.location.latitude - location.latitude) < 0.0001 &&
+            abs(existingRating.location.longitude - location.longitude) < 0.0001 &&
+            existingRating.rating == cloudRating.rating &&
+            abs(existingRating.createdAt.timeIntervalSince(cloudRating.createdAt)) < 60
+        }
+        
+        if duplicateByContent {
+            debugPrint("[RatingsViewModel] 🔴 Rating already exists (by content), skipping")
+            return
+        }
+        
+        debugPrint("[RatingsViewModel] 🔴 Adding new rating to map: \(cloudRating.id)")
+        
+        // Download photos
+        let foodPhoto = await downloadPhoto(from: cloudRating.foodPhotoUrl)
+        let cartPhoto = await downloadPhoto(from: cloudRating.cartPhotoUrl)
+        
+        // Only add if we successfully downloaded the food photo (required!)
+        guard let foodPhoto = foodPhoto else {
+            debugPrint("[RatingsViewModel] ❌ Failed to download food photo for new rating")
+            return
+        }
+        
+        // Convert Location to FoodLocation
+        let foodLocation = FoodLocation(
+            latitude: location.latitude,
+            longitude: location.longitude
+        )
+        
+        // Convert to FoodRating model
+        let newRating = FoodRating(
+            id: cloudRating.id,
+            userId: cloudRating.userId,
+            foodImageData: foodPhoto,
+            cartImageData: cartPhoto,
+            rating: cloudRating.rating,
+            notes: cloudRating.reviewText,
+            displayName: location.name,
+            location: foodLocation,
+            createdAt: cloudRating.createdAt
+        )
+        
+        // Add to our local array
+        ratings.append(newRating)
+        
+        debugPrint("[RatingsViewModel] ✅ New rating added! Total ratings: \(ratings.count)")
     }
 }
 

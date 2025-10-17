@@ -14,6 +14,7 @@ import SwiftUI
 import PhotosUI
 import CoreLocation
 import MapKit
+import Supabase
 
 struct AddRatingView: View {
     /// We hold onto the main brain so we can add the new rating when the user taps save.
@@ -22,19 +23,25 @@ struct AddRatingView: View {
     let prefilledLocation: FoodLocation?
     /// Optional pre-filled name (when "Eaten Here?" is tapped)
     let prefilledName: String?
+    /// Whether to hide the map section (when rating existing cart)
+    let hideMapSection: Bool
     
     /// This environment helper lets us close the screen once we finish.
     @Environment(\.dismiss) private var dismiss
     
     /// Location manager to get current GPS location
     @Environment(LocationManager.self) private var locationManager
+    
+    /// Auth view model to get current user ID
+    @Environment(AuthViewModel.self) private var authViewModel
 
     // MARK: - Form State (View Layer)
     
-    init(model: RatingsViewModel, prefilledLocation: FoodLocation? = nil, prefilledName: String? = nil) {
+    init(model: RatingsViewModel, prefilledLocation: FoodLocation? = nil, prefilledName: String? = nil, hideMapSection: Bool = false) {
         self.model = model
         self.prefilledLocation = prefilledLocation
         self.prefilledName = prefilledName
+        self.hideMapSection = hideMapSection
     }
 
     /// Stores the selected photo for the food as `PhotosPickerItem` until we convert it to Data.
@@ -77,7 +84,14 @@ struct AddRatingView: View {
                 ratingSection
                 photoSection
                 notesSection
-                locationSection
+                
+                // Only show location section if not hiding it (i.e., not from "Eaten Here Before")
+                if !hideMapSection {
+                    locationSection
+                } else {
+                    // Show locked location info when map is hidden
+                    lockedLocationSection
+                }
             }
             // Make the entire form's text purple to match home
             .foregroundStyle(Color.purple)
@@ -100,7 +114,7 @@ struct AddRatingView: View {
                         debugPrint("[AddRatingView] Save button tapped.")
                         createRating()
                     }
-                    .disabled(foodImageData == nil || selectedCoordinate == nil || ratingValue == 0)
+                    .disabled(foodImageData == nil || (hideMapSection ? false : selectedCoordinate == nil) || ratingValue == 0)
                     .foregroundStyle(Color.purple)
                 }
             }
@@ -274,9 +288,18 @@ struct AddRatingView: View {
     
     /// Section for store or food name.
     private var nameSection: some View {
-        Section("Name") {
-            TextField("Store or food name", text: $displayName)
-                .foregroundStyle(Color.purple)
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Name")
+                    .font(.headline)
+                Text("Enter the name of the food or cart")
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+                
+                TextField("e.g., Pad Thai Cart, Mama's Tacos", text: $displayName)
+                    .textFieldStyle(.roundedBorder)
+                    .foregroundStyle(Color.purple)
+            }
         }
     }
 
@@ -303,6 +326,30 @@ struct AddRatingView: View {
             )
         }
     }
+    
+    /// Section that shows locked location info (when rating existing cart)
+    private var lockedLocationSection: some View {
+        Section("Cart Location") {
+            HStack {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(Color.orange)
+                Text("Location locked to existing cart")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.secondary)
+                Spacer()
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.green)
+            }
+            .padding(.vertical, 4)
+            
+            if let location = prefilledLocation {
+                Text("📍 \(String(format: "%.4f", location.latitude)), \(String(format: "%.4f", location.longitude))")
+                    .font(.caption)
+                    .foregroundStyle(Color.secondary)
+                    .padding(.horizontal)
+            }
+        }
+    }
 
     /// Section that shows a mini map to pick the location.
     private var locationSection: some View {
@@ -320,8 +367,9 @@ struct AddRatingView: View {
             MapReader { proxy in
                 Map(initialPosition: .region(mapRegion))
                     .mapControls {
-                        MapUserLocationButton()
                         MapCompass()
+                        // MapUserLocationButton() removed - prevents accidental location changes
+                        // Location is automatically set when + button is pressed
                     }
                     .mapStyle(.standard(pointsOfInterest: .excludingAll))
                     /// We use a drag gesture with zero distance so we can grab the tap location (TapGesture doesn't give us a CGPoint).
@@ -374,13 +422,26 @@ struct AddRatingView: View {
             showValidationAlert = true
             return
         }
+        
+        // NEW: Validate name is provided
+        guard !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            validationMessage = "Please enter a name for the food or cart."
+            showValidationAlert = true
+            return
+        }
+
+        guard let userId = authViewModel.currentUser?.id else {
+            debugPrint("[AddRatingView] ❌ No user ID found")
+            return
+        }
 
         let rating = FoodRating(
+            userId: userId,
             foodImageData: foodImageData,
             cartImageData: cartImageData,
             rating: ratingValue,
             notes: notes.isEmpty ? nil : notes,
-            displayName: displayName.isEmpty ? nil : displayName,
+            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
             location: FoodLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         )
 

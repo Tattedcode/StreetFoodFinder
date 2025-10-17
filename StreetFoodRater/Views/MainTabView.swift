@@ -10,6 +10,7 @@
 //
 
 import SwiftUI
+import CoreLocation
 
 struct MainTabView: View {
     /// The shared brain for all ratings
@@ -20,6 +21,15 @@ struct MainTabView: View {
     
     /// Controls whether the add rating sheet is shown
     @State private var showAddRating = false
+    
+    /// Controls whether the nearby cart selection is shown
+    @State private var showNearbyCartSelection = false
+    
+    /// Location manager for getting current GPS
+    @Environment(LocationManager.self) private var locationManager
+    
+    /// When user selects a cart, store it to prefill AddRatingView
+    @State private var selectedCart: LocationGroup?
     
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -53,37 +63,104 @@ struct MainTabView: View {
                     }
                     .tag(Tab.favorites)
                 
-                // List Tab
-                RatingsListView(model: model)
+                // Profile Tab
+                ProfileView(model: model)
                     .tabItem {
-                        Label("List", systemImage: "list.bullet")
+                        Label("Profile", systemImage: "person.fill")
                     }
-                    .tag(Tab.list)
+                    .tag(Tab.profile)
             }
             .tint(.purple)  // Purple selected color to match your theme
             
-            // Floating Add Button (middle of tab bar)
-            Button {
-                debugPrint("[MainTabView] Add button tapped")
-                showAddRating = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .frame(width: 60, height: 60)
-                    .background(
-                        Circle()
-                            .fill(LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .top, endPoint: .bottom))
-                    )
-                    .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6)
+            // Floating Add Button (middle of tab bar) - Only show on Map tab
+            if selectedTab == .map {
+                Button {
+                    debugPrint("[MainTabView] Add button tapped")
+                    checkForNearbyCarts()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(Color.white)
+                        .frame(width: 60, height: 60)
+                        .background(
+                            Circle()
+                                .fill(LinearGradient(colors: [Color.purple, Color.purple.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                        )
+                        .shadow(color: Color.black.opacity(0.3), radius: 12, x: 0, y: 6)
+                }
+                .offset(y: -25)  // Lift it above the tab bar
             }
-            .offset(y: -25)  // Lift it above the tab bar
         }
+        // Show nearby cart selection if there are carts nearby
+        .sheet(isPresented: $showNearbyCartSelection) {
+            if let userLocation = locationManager.currentLocation {
+                NearbyCartSelectionView(
+                    model: model,
+                    userLocation: userLocation,
+                    onCartSelected: { cart in
+                        debugPrint("[MainTabView] User selected cart: \(cart.name)")
+                        selectedCart = cart
+                        showAddRating = true
+                    },
+                    onCreateNew: {
+                        debugPrint("[MainTabView] User chose to create new cart")
+                        selectedCart = nil
+                        showAddRating = true
+                    }
+                )
+            }
+        }
+        // Show add rating sheet
         .sheet(isPresented: $showAddRating) {
-            AddRatingView(model: model)
+            if let cart = selectedCart,
+               let firstRating = cart.latestRating {
+                // Pre-fill with selected cart
+                AddRatingView(
+                    model: model,
+                    prefilledLocation: firstRating.location,
+                    prefilledName: cart.name
+                )
+            } else {
+                // New cart
+                AddRatingView(model: model)
+            }
         }
         .onAppear {
             debugPrint("[MainTabView] Appeared with initial tab: \(selectedTab)")
+        }
+    }
+    
+    /// Check if there are any carts within 50 meters
+    /// If yes → show selection screen
+    /// If no → go directly to add rating
+    private func checkForNearbyCarts() {
+        guard let userLocation = locationManager.currentLocation else {
+            debugPrint("[MainTabView] ⚠️ No GPS location available, opening add rating directly")
+            selectedCart = nil
+            showAddRating = true
+            return
+        }
+        
+        // Find carts within 50 meters
+        let nearbyCarts = model.locationGroups.filter { group in
+            let cartLocation = CLLocation(
+                latitude: group.coordinate.latitude,
+                longitude: group.coordinate.longitude
+            )
+            let userLoc = CLLocation(
+                latitude: userLocation.latitude,
+                longitude: userLocation.longitude
+            )
+            return userLoc.distance(from: cartLocation) <= 50
+        }
+        
+        if nearbyCarts.isEmpty {
+            debugPrint("[MainTabView] No carts nearby, opening add rating directly")
+            selectedCart = nil
+            showAddRating = true
+        } else {
+            debugPrint("[MainTabView] Found \(nearbyCarts.count) nearby carts, showing selection")
+            showNearbyCartSelection = true
         }
     }
     
@@ -93,7 +170,7 @@ struct MainTabView: View {
         case search
         case add  // Middle placeholder
         case favorites
-        case list
+        case profile
     }
 }
 
@@ -130,62 +207,6 @@ private struct PlaceholderView: View {
     }
 }
 
-/// Placeholder profile view for future features
-private struct ProfileView: View {
-    let model: RatingsViewModel
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundStyle(Color.purple)
-                
-                Text("Profile")
-                    .font(.system(size: 28, weight: .bold))
-                    .foregroundStyle(Color.purple)
-                
-                Text("Coming soon!")
-                    .font(.system(size: 18))
-                    .foregroundStyle(Color.secondary)
-                
-                // Stats section
-                VStack(spacing: 12) {
-                    StatRow(title: "Total Ratings", value: "\(model.ratings.count)")
-                    
-                    if !model.ratings.isEmpty {
-                        let avgRating = Double(model.ratings.map { $0.rating }.reduce(0, +)) / Double(model.ratings.count)
-                        StatRow(title: "Average Rating", value: String(format: "%.1f ⭐", avgRating))
-                    }
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .padding(.horizontal)
-            }
-            .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-    }
-}
-
-/// Simple stat row for profile
-private struct StatRow: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 16))
-                .foregroundStyle(Color.secondary)
-            Spacer()
-            Text(value)
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Color.purple)
-        }
-    }
-}
 
 #Preview {
     MainTabView(model: RatingsViewModel())

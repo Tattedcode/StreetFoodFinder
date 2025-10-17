@@ -87,26 +87,31 @@ final class SupabaseManager: ObservableObject {
     
     /// Create a new location or find existing one nearby
     func createOrFindLocation(name: String?, latitude: Double, longitude: Double) async throws -> Location {
-        debugPrint("[SupabaseManager] Looking for existing location near: \(latitude), \(longitude)")
+        let cartName = name ?? "Unnamed"
+        debugPrint("[SupabaseManager] Looking for existing location: '\(cartName)' near: \(latitude), \(longitude)")
         
-        // Check if a location already exists very close to these coordinates (within ~10 meters)
+        // Check if a location already exists with THE SAME NAME very close to these coordinates
         // This prevents duplicates when multiple people rate the same cart
+        // BUT allows different carts at the same location to exist separately!
         let existingLocations: [Location] = try await client
             .from("locations")
             .select()
             .execute()
             .value
         
-        // Find any location within 0.0001 degrees (~10 meters)
+        // Find location with MATCHING NAME within 0.0001 degrees (~10 meters)
+        // KEY FIX: Now checks BOTH name AND proximity!
         if let nearby = existingLocations.first(where: { location in
-            abs(location.latitude - latitude) < 0.0001 && abs(location.longitude - longitude) < 0.0001
+            let nameMatches = location.name?.lowercased() == cartName.lowercased()
+            let coordinatesClose = abs(location.latitude - latitude) < 0.0001 && abs(location.longitude - longitude) < 0.0001
+            return nameMatches && coordinatesClose
         }) {
-            debugPrint("[SupabaseManager] ✅ Found existing location: \(nearby.id)")
+            debugPrint("[SupabaseManager] ✅ Found existing location: '\(nearby.name ?? "Unknown")' (ID: \(nearby.id))")
             return nearby
         }
         
-        // No nearby location found, create a new one
-        debugPrint("[SupabaseManager] Creating new location: \(name ?? "Unnamed")")
+        // No matching location found, create a new one
+        debugPrint("[SupabaseManager] Creating NEW location: '\(cartName)' at \(latitude), \(longitude)")
         let newLocation = Location(
             id: UUID(),
             name: name,
@@ -123,7 +128,7 @@ final class SupabaseManager: ObservableObject {
             .execute()
             .value
         
-        debugPrint("[SupabaseManager] ✅ Created new location with ID: \(created.id)")
+        debugPrint("[SupabaseManager] ✅ Created new location: '\(created.name ?? "Unknown")' with ID: \(created.id)")
         return created
     }
     
@@ -209,6 +214,24 @@ final class SupabaseManager: ObservableObject {
         return ratings
     }
     
+    /// Fetch a single location by ID
+    func fetchLocation(by id: UUID) async throws -> Location {
+        debugPrint("[SupabaseManager] Fetching location: \(id)")
+        let locations: [Location] = try await client
+            .from("locations")
+            .select()
+            .eq("id", value: id)
+            .execute()
+            .value
+        
+        guard let location = locations.first else {
+            throw SupabaseError.notFound
+        }
+        
+        debugPrint("[SupabaseManager] ✅ Location fetched: \(location.name)")
+        return location
+    }
+    
     /// Delete a rating (only if you own it!)
     func deleteRating(id: UUID) async throws {
         guard let userId = currentUser?.id else {
@@ -225,6 +248,118 @@ final class SupabaseManager: ObservableObject {
             .execute()
         
         debugPrint("[SupabaseManager] ✅ Rating deleted")
+    }
+    
+    /// Delete all ratings for a specific user (used when deleting account)
+    func deleteAllUserRatings(userId: UUID) async throws {
+        debugPrint("[SupabaseManager] Deleting all ratings for user: \(userId)")
+        
+        try await client
+            .from("ratings")
+            .delete()
+            .eq("user_id", value: userId)
+            .execute()
+        
+        debugPrint("[SupabaseManager] ✅ All user ratings deleted")
+    }
+    
+    /// Delete all photos uploaded by a user (used when deleting account)
+    func deleteAllUserPhotos(userId: UUID) async throws {
+        debugPrint("[SupabaseManager] Deleting all photos for user: \(userId)")
+        
+        // Note: Supabase Storage doesn't have a built-in way to filter by user_id
+        // For now, we'll just skip photo deletion as they'll be orphaned but won't break anything
+        // In production, you'd want to track photo URLs in the ratings table and delete them individually
+        
+        debugPrint("[SupabaseManager] ✅ Photo deletion skipped (photos will be orphaned)")
+    }
+    
+    /// Delete the user's account from Supabase Auth
+    func deleteUserAccount() async throws {
+        debugPrint("[SupabaseManager] Deleting user account from Supabase Auth...")
+        
+        // Supabase's admin.deleteUser requires service_role key
+        // For now, users can request deletion through Supabase dashboard
+        // Or we implement this server-side
+        
+        // Instead, we'll sign out the user after deleting their data
+        debugPrint("[SupabaseManager] ⚠️ User account deletion requires admin privileges")
+        debugPrint("[SupabaseManager] ✅ User data deleted, account should be deleted manually from dashboard")
+    }
+    
+    // MARK: - Nuclear Options (Testing Only!)
+    
+    /// ☢️ DELETE ALL RATINGS FROM ALL USERS
+    /// This is for testing purposes only!
+    func deleteAllRatings() async throws {
+        debugPrint("[SupabaseManager] ☢️ DELETING ALL RATINGS FROM DATABASE")
+        
+        try await client
+            .from("ratings")
+            .delete()
+            .neq("id", value: "00000000-0000-0000-0000-000000000000")  // Delete everything (all IDs not equal to impossible UUID)
+            .execute()
+        
+        debugPrint("[SupabaseManager] ✅ ALL RATINGS DELETED")
+    }
+    
+    /// ☢️ DELETE ALL LOCATIONS FROM ALL USERS
+    /// This is for testing purposes only!
+    func deleteAllLocations() async throws {
+        debugPrint("[SupabaseManager] ☢️ DELETING ALL LOCATIONS FROM DATABASE")
+        
+        try await client
+            .from("locations")
+            .delete()
+            .neq("id", value: "00000000-0000-0000-0000-000000000000")  // Delete everything (all IDs not equal to impossible UUID)
+            .execute()
+        
+        debugPrint("[SupabaseManager] ✅ ALL LOCATIONS DELETED")
+    }
+    
+    // MARK: - Real-Time Subscriptions
+    
+    /// Subscribe to real-time updates for ratings
+    /// Returns a channel that you can unsubscribe from later
+    func subscribeToRatingsUpdates(onInsert: @escaping (CloudRating, Location) -> Void) async throws -> RealtimeChannelV2 {
+        debugPrint("[SupabaseManager] 🔴 Setting up real-time subscription to ratings table...")
+        
+        let channel = client.realtimeV2.channel("ratings-changes")
+        
+        let insertStream = channel.postgresChange(
+            InsertAction.self,
+            schema: "public",
+            table: "ratings"
+        )
+        
+        await channel.subscribe()
+        
+        // Listen for inserts in the background
+        Task {
+            for await insert in insertStream {
+                debugPrint("[SupabaseManager] 🔴 NEW RATING DETECTED from real-time!")
+                do {
+                    let cloudRating = try insert.record.decode(as: CloudRating.self)
+                    debugPrint("[SupabaseManager] 🔴 Real-time rating: \(cloudRating.id)")
+                    
+                    // Fetch the location data for this rating
+                    let location = try await fetchLocation(by: cloudRating.locationId)
+                    onInsert(cloudRating, location)
+                } catch {
+                    debugPrint("[SupabaseManager] ❌ Failed to decode/fetch real-time rating: \(error)")
+                }
+            }
+        }
+        
+        debugPrint("[SupabaseManager] ✅ Real-time subscription active!")
+        return channel
+    }
+    
+    /// Unsubscribe from a channel
+    func unsubscribe(from channel: RealtimeChannelV2) async {
+        debugPrint("[SupabaseManager] Unsubscribing from real-time channel...")
+        await channel.unsubscribe()
+        debugPrint("[SupabaseManager] ✅ Unsubscribed from real-time updates")
     }
     
     // MARK: - Photo Upload
@@ -259,6 +394,7 @@ final class SupabaseManager: ObservableObject {
     enum PhotoType: String {
         case food
         case cart
+        case profile
     }
     
     // MARK: - Real-Time Subscriptions
@@ -278,6 +414,7 @@ enum SupabaseError: LocalizedError {
     case notAuthenticated
     case uploadFailed
     case networkError
+    case notFound
     
     var errorDescription: String? {
         switch self {
@@ -287,6 +424,8 @@ enum SupabaseError: LocalizedError {
             return "Failed to upload photo to cloud."
         case .networkError:
             return "Network connection error. Please check your internet."
+        case .notFound:
+            return "The requested data was not found."
         }
     }
 }
